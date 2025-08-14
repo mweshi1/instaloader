@@ -270,6 +270,8 @@ class InstaloaderContext:
                                 'ig_vw': '1920', 'ig_cb': '1', 'csrftoken': '',
                                 's_network': '', 'ds_user_id': ''})
         session.headers.update(self._default_http_header())
+        # Getting mid cookie value
+        session.get("https://i.instagram.com/api/v1/web/login_page/")
         # Override default timeout behavior.
         # Need to silence mypy bug for this. See: https://github.com/python/mypy/issues/2427
         session.request = partial(session.request, timeout=self.request_timeout) # type: ignore
@@ -330,7 +332,8 @@ class InstaloaderContext:
                 # username is invalid.
                 raise LoginException('Login error: User {} does not exist.'.format(user))
         # '{"authenticated": true, "user": true, "userId": ..., "oneTapPrompt": false, "status": "ok"}'
-        session.headers.update({'X-CSRFToken': login.cookies['csrftoken']})
+        if 'csrftoken' in login.cookies:
+            session.headers.update({'X-CSRFToken': login.cookies['csrftoken']})
         self._session = session
         self.username = user
         self.user_id = resp_json['userId']
@@ -347,8 +350,15 @@ class InstaloaderContext:
             raise InvalidArgumentException("No two-factor authentication pending.")
         (session, user, two_factor_id) = self.two_factor_auth_pending
 
-        login = session.post('https://www.instagram.com/accounts/login/ajax/two_factor/',
-                             data={'username': user, 'verificationCode': two_factor_code, 'identifier': two_factor_id},
+        login = session.post('https://www.instagram.com/api/v1/web/accounts/login/ajax/two_factor/',
+                             data={
+                                 'identifier': two_factor_id,
+                                 'queryParams': '{"next":"/"}',
+                                 'trust_signal': 'true',
+                                 'username': user,
+                                 'verification_method': '1',
+                                 'verificationCode': two_factor_code,
+                             },
                              allow_redirects=True)
         resp_json = login.json()
         if resp_json['status'] != 'ok':
@@ -356,7 +366,8 @@ class InstaloaderContext:
                 raise BadCredentialsException("2FA error: {}".format(resp_json['message']))
             else:
                 raise BadCredentialsException("2FA error: \"{}\" status.".format(resp_json['status']))
-        session.headers.update({'X-CSRFToken': login.cookies['csrftoken']})
+        if 'csrftoken' in login.cookies:
+            session.headers.update({'X-CSRFToken': login.cookies['csrftoken']})
         self._session = session
         self.username = user
         self.two_factor_auth_pending = None
